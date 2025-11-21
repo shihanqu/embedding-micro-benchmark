@@ -337,21 +337,27 @@ def run_all():
 def print_results_table(results):
     # Clean fixed-width console table
     fields = [
-        ("corpus", 8),
-        ("model", 40),
-        ("phrases", 8),
-        ("avg_tokens_per_phrase", 10),
-        ("tokens_per_call", 12),
-        ("min_s", 8),
-        ("p50_s", 8),
-        ("p90_s", 8),
-        ("max_s", 8),
-        ("avg_s", 8),
-        ("tokens_per_second", 12),
-        ("phrases_per_second", 12),
+        ("corpus", 8),  # corpus
+        ("model", 40),  # model
+        ("phrases", 8),  # phrases
+        ("avg_tokens_per_phrase", 10),  # tok/phrase
+        ("tokens_per_call", 10),  # tok/call
+        ("min_s", 8),  # min_s
+        ("p50_s", 8),  # p50_s
+        ("p90_s", 8),  # p90_s
+        ("max_s", 8),  # max_s
+        ("avg_s", 8),  # avg_s
+        ("tokens_per_second", 12),  # tok/s
+        ("phrases_per_second", 12),  # phrases/s
     ]
 
-    header = " ".join(name.ljust(width) for name, width in fields)
+    header_labels = [
+        "corpus", "model", "phrases", "tok/phrase", "tok/call",
+        "min_s", "p50_s", "p90_s", "max_s", "avg_s",
+        "tok/s", "phrases/s"
+    ]
+
+    header = " ".join(lbl.ljust(width) for lbl, (_, width) in zip(header_labels, fields))
     print(header)
     print("-" * len(header))
 
