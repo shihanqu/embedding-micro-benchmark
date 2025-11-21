@@ -1,13 +1,13 @@
 
-# MicroEmbedBench
+# Embedding Micro Bench
 
-Ultra-lean embedding micro-benchmarker.  
-Fast loops, firm metrics, zero fluff.
+Tiny embedding enchmarker. 
 
 ## Why
 Measure model latency, token load, throughput.  
 Compare short/medium/long corpora.  
 Spot slowdowns, bottlenecks, drift.
+Designed for local endpoints but can be easily modded for cloud API services.
 
 ## What it does
 - Runs warmups + timed runs  
