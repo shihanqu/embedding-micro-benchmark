@@ -1,42 +1,45 @@
 import time
 import statistics
 import requests
+import csv
 from transformers import AutoTokenizer
 
-URL = "http://192.168.198.120:1234/v1/embeddings" #default for LM Studio, but compatible with any openAI embedding endpoint if you include api key
+# ---------------- Configuration ----------------
+
+URL = "http://192.168.198.120:1234/v1/embeddings"
 
 MODELS = [
     "text-embedding-qwen3-embedding-8b",
     "text-embedding-qwen3-embedding-4b",
+    "text-embedding-qwen3-embedding-0.6b@f16",
+    "text-embedding-qwen3-embedding-0.6b@q8_0",
 ]
 
+N_WARMUP = 1
+N_RUNS   = 5
 
-# short phrases
+TOKENIZER_NAME = "Qwen/Qwen2.5-7B-Instruct"
+tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
+
+# ---------------- Corpus Definitions ----------------
+
+SHORT_BASE_WORDS = [
+    "alpha","beta","gamma","delta","epsilon","zeta","eta","theta","iota","kappa",
+    "lambda","mu","nu","xi","omicron","pi","rho","sigma","tau","upsilon",
+    "phi","chi","psi","omega","red","blue","green","black","white",
+    "day","night","sun","moon","star","code","data","model","token","vector",
+    "graph","node","edge","batch","epoch","input","output","query","index","cache"
+]
+
 BASE_PHRASES_COUNT = 163
 MULTIPLIER = 7
-TARGET_COUNT = BASE_PHRASES_COUNT * MULTIPLIER  # 163 * 7 = 1141
+TARGET_COUNT = BASE_PHRASES_COUNT * MULTIPLIER
 
-# Single common words ⇒ very short, typically 1 token per phrase for most tokenizers
-base_words = [
-    "alpha", "beta", "gamma", "delta", "epsilon",
-    "zeta", "eta", "theta", "iota", "kappa",
-    "lambda", "mu", "nu", "xi", "omicron",
-    "pi", "rho", "sigma", "tau", "upsilon",
-    "phi", "chi", "psi", "omega",
-    "red", "blue", "green", "black", "white",
-    "day", "night", "sun", "moon", "star",
-    "code", "data", "model", "token", "vector",
-    "graph", "node", "edge", "batch", "epoch",
-    "input", "output", "query", "index", "cache"
-]
-
-# Repeat the base_words list enough times and then truncate to exactly 1141 phrases
-phrases = (base_words * ((TARGET_COUNT // len(base_words)) + 1))[:TARGET_COUNT]
+short_phrases = (SHORT_BASE_WORDS * ((TARGET_COUNT // len(SHORT_BASE_WORDS)) + 1))[:TARGET_COUNT]
 
 
-'''
-# Alternate corpus: 1/10 the phrases, each ~10x longer (paragraph-scale)
-phrases = [
+# long corpus: Large paragraphs
+long_phrases = [
     "Artificial intelligence is transforming the world not just through flashy demos, but by slowly rewiring everyday workflows in software engineering, marketing, design, operations, and even traditional industries like manufacturing and logistics. Teams that once relied on manual triage of emails, tickets, and documents are quietly replacing those steps with models that categorize, summarize, and prioritize at scale. The impact is rarely a single dramatic breakthrough; it’s the compound effect of shaving minutes off thousands of repeated tasks each week. As these systems integrate more deeply into existing tools, the line between ‘using AI’ and ‘just doing your job’ starts to disappear. What used to require specialized data science expertise is now accessible to any reasonably motivated engineer through simple APIs and SDKs. The real transformation is cultural: organizations that learn to iterate quickly on AI-driven workflows gain leverage, while those that treat AI as a one-off experiment stagnate. Over the next decade, the competitive gap between these two groups will widen dramatically, and most of the difference will be explained by who actually built feedback loops around AI, rather than who merely talked about it.",
 
     "Machine learning is a subset of artificial intelligence, but that statement is so shallow it’s basically useless unless you understand the constraints that make machine learning valuable and dangerous at the same time. Models learn patterns from data, not truth from reality, which means they are only as good as the distributions they see and the objectives they are optimized for. When teams blindly optimize for accuracy without thinking about business goals, they ship models that technically ‘perform’ yet fail to move any real metrics. Conversely, when teams tightly couple their evaluation metrics to concrete outcomes—click-through rate, revenue, time saved, error reduction—the same mathematical machinery suddenly becomes a weaponized optimization engine. The subset that matters is not machine learning as a field, but the specific slice where your data, your loss function, and your constraints intersect. Everything else is noise and academic posturing. Until you map the math to a real-world payoff, you’re just doing expensive curve fitting.",
@@ -69,11 +72,8 @@ phrases = [
 
     "The biggest blind spot in most embedding projects is the absence of a feedback loop that connects user behavior back into model and pipeline decisions. Teams ship a retrieval system once and then treat it as static infrastructure, even though user queries continually evolve as the product and audience change. Logs pile up with queries that return poor results, but no one mines them to identify systematic gaps, mislabeled documents, or index configuration issues. When you ignore this data, you leave easy wins on the table: adding domain-specific synonyms, refining chunking strategies, or creating specialized indexes for common query types. Embeddings are not a one-and-done solution; they are a component in a living system that either adapts or decays. If you refuse to close the loop with real usage data, you are effectively choosing stagnation and accepting that your search quality will slowly get worse relative to user expectations."
 ]
-'''
 
-'''
-# Mid Corpus
-phrases = [
+medium_phrases = [
     "Artificial intelligence is transforming the world.",
     "Machine learning is a subset of artificial intelligence.",
     "Deep learning models can achieve state of the art performance on many tasks.",
@@ -238,129 +238,162 @@ phrases = [
     "Highly specific sentences stress the detail captured by embeddings.",
     "Adding noise to sentences checks stability of the representation."
 ]
-'''
 
-N_WARMUP = 2
-N_RUNS   = 10
 
-# ---------------- Tokenization setup ----------------
+CORPORA = {
+    "short": short_phrases,
+    "medium": medium_phrases,
+    "long": long_phrases,
+}
 
-# Use a Qwen tokenizer as an approximation for the embedding models’ tokenizer
-TOKENIZER_NAME = "Qwen/Qwen2.5-7B-Instruct"  # adjust if you know the exact base model
-tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
+# ---------------- Utility Functions ----------------
 
-def count_tokens_per_phrase(texts):
+def log(msg):
+    print(f"[benchmark] {msg}")
+
+def count_tokens(texts):
     enc = tokenizer(texts, add_special_tokens=False)
-    # enc["input_ids"] is list[list[int]]
     return [len(ids) for ids in enc["input_ids"]]
 
-phrase_token_counts = count_tokens_per_phrase(phrases)
-TOKENS_PER_CALL = sum(phrase_token_counts)
-AVG_TOKENS_PER_PHRASE = TOKENS_PER_CALL / len(phrases)
-
-print(f"Corpus size: {len(phrases)} phrases")
-print(f"Average tokens per phrase (tokenizer={TOKENIZER_NAME}): {AVG_TOKENS_PER_PHRASE:.2f}")
-print(f"Tokens per call (all phrases): {TOKENS_PER_CALL}")
-print()
-
-# ---------------- Benchmarking ----------------
-
 def call_embedding(model, phrases):
-    r = requests.post(
-        URL,
-        json={"model": model, "input": phrases},
-        timeout=30,
-    )
+    r = requests.post(URL, json={"model": model, "input": phrases}, timeout=30)
     r.raise_for_status()
     resp = r.json()
 
     if "data" not in resp or not resp["data"]:
-        raise SystemExit(f"Unexpected response for model {model}: {resp}")
+        raise RuntimeError(f"Model {model} returned invalid response: {resp}")
 
-    # sanity check
     for i, item in enumerate(resp["data"]):
         if "embedding" not in item:
-            raise SystemExit(
-                f"Missing 'embedding' for model {model}, item {i}: {item}"
-            )
+            raise RuntimeError(f"Missing embedding for model {model}, item {i}")
 
 def benchmark_model(model, phrases, n_warmup, n_runs, tokens_per_call):
-    print(f"\n=== Benchmarking model: {model} ===")
-
-    # Warmup
+    log(f"    Warmup ({n_warmup} runs)")
     for i in range(n_warmup):
-        try:
-            call_embedding(model, phrases)
-        except Exception as e:
-            raise SystemExit(f"Warmup failed for model {model}: {e}")
+        log(f"      Warmup run {i+1}/{n_warmup}")
+        call_embedding(model, phrases)
 
     durations = []
 
+    log(f"    Timed runs ({n_runs})")
     for i in range(n_runs):
+        log(f"      Timed run {i+1}/{n_runs}")
         t0 = time.perf_counter()
-        try:
-            call_embedding(model, phrases)
-        except Exception as e:
-            raise SystemExit(f"Run {i} failed for model {model}: {e}")
+        call_embedding(model, phrases)
         t1 = time.perf_counter()
-
-        dt = t1 - t0
-        durations.append(dt)
-        print(f"  Run {i+1:02d}: {dt:.4f} s")
+        durations.append(t1 - t0)
 
     total_time = sum(durations)
     total_tokens = tokens_per_call * n_runs
 
-    avg = statistics.mean(durations)
-    p50 = statistics.median(durations)
-    p90 = statistics.quantiles(durations, n=10)[8] if len(durations) >= 10 else None
-    mn = min(durations)
-    mx = max(durations)
-
-    tokens_per_second = total_tokens / total_time
-    phrases_per_second = (len(phrases) * n_runs) / total_time
-
-    result = {
+    return {
         "model": model,
-        "runs": n_runs,
-        "min_s": mn,
-        "max_s": mx,
-        "avg_s": avg,
-        "p50_s": p50,
-        "p90_s": p90,
-        "phrases_per_call": len(phrases),
-        "tokens_per_call": tokens_per_call,
-        "tokens_per_second": tokens_per_second,
-        "phrases_per_second": phrases_per_second,
-        "avg_tokens_per_phrase": AVG_TOKENS_PER_PHRASE,
+        "min_s": min(durations),
+        "max_s": max(durations),
+        "avg_s": statistics.mean(durations),
+        "p50_s": statistics.median(durations),
+        "p90_s": statistics.quantiles(durations, n=10)[8],
+        "tokens_per_second": total_tokens / total_time,
+        "phrases_per_second": (len(phrases) * n_runs) / total_time,
     }
 
-    return result
+
+# ---------------- Master Benchmark Loop ----------------
+
+def run_all():
+    results = []
+
+    for corpus_name, phrases in CORPORA.items():
+        log(f"Starting corpus: {corpus_name} ({len(phrases)} phrases)")
+
+        token_counts = count_tokens(phrases)
+        tokens_per_call = sum(token_counts)
+        avg_tokens_per_phrase = tokens_per_call / len(phrases)
+
+        log(f"Token stats for corpus '{corpus_name}': "
+            f"{tokens_per_call} tokens per call, "
+            f"{avg_tokens_per_phrase:.2f} tokens/phrase")
+
+        for model in MODELS:
+            log(f"  Benchmarking model: {model}")
+            stats = benchmark_model(model, phrases, N_WARMUP, N_RUNS, tokens_per_call)
+            log(f"  Finished model: {model}")
+
+            stats.update({
+                "corpus": corpus_name,
+                "phrases": len(phrases),
+                "tokens_per_call": tokens_per_call,
+                "avg_tokens_per_phrase": avg_tokens_per_phrase,
+            })
+            results.append(stats)
+
+        log(f"Completed corpus: {corpus_name}")
+
+    return results
 
 
-def main():
-    all_results = []
+# ---------------- Output Formatting ----------------
 
-    for model in MODELS:
-        res = benchmark_model(model, phrases, N_WARMUP, N_RUNS, TOKENS_PER_CALL)
-        all_results.append(res)
+def print_results_table(results):
+    # Clean fixed-width console table
+    fields = [
+        ("corpus", 8),
+        ("model", 40),
+        ("phrases", 8),
+        ("avg_tokens_per_phrase", 10),
+        ("tokens_per_call", 12),
+        ("min_s", 8),
+        ("p50_s", 8),
+        ("p90_s", 8),
+        ("max_s", 8),
+        ("avg_s", 8),
+        ("tokens_per_second", 12),
+        ("phrases_per_second", 12),
+    ]
 
-    print("\n=== Summary ===")
-    for r in all_results:
-        print(f"\nModel: {r['model']}")
-        print(f"  Calls:               {r['runs']}")
-        print(f"  Phrases per call:    {r['phrases_per_call']}")
-        print(f"  Avg tokens/phrase:   {r['avg_tokens_per_phrase']:.2f}")
-        print(f"  Tokens per call:     {r['tokens_per_call']}")
-        print(f"  Min latency:         {r['min_s']:.4f} s")
-        print(f"  P50 latency:         {r['p50_s']:.4f} s")
-        if r['p90_s'] is not None:
-            print(f"  P90 latency:         {r['p90_s']:.4f} s")
-        print(f"  Max latency:         {r['max_s']:.4f} s")
-        print(f"  Avg latency:         {r['avg_s']:.4f} s")
-        print(f"  Tokens / second:     {r['tokens_per_second']:.1f}")
-        print(f"  Phrases / second:    {r['phrases_per_second']:.2f}")
+    header = " ".join(name.ljust(width) for name, width in fields)
+    print(header)
+    print("-" * len(header))
 
+    for r in results:
+        row = []
+        for name, width in fields:
+            val = r[name]
+            if isinstance(val, float):
+                val = f"{val:.4f}"
+            row.append(str(val).ljust(width))
+        print(" ".join(row))
+
+def write_results_csv(results, filename="benchmark_results.csv"):
+    # These must match the fields used by print_results_table
+    fieldnames = [
+        "corpus",
+        "model",
+        "phrases",
+        "avg_tokens_per_phrase",
+        "tokens_per_call",
+        "min_s",
+        "p50_s",
+        "p90_s",
+        "max_s",
+        "avg_s",
+        "tokens_per_second",
+        "phrases_per_second",
+    ]
+
+    with open(filename, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in results:
+            writer.writerow(r)
+
+
+# ---------------- Main ----------------
 
 if __name__ == "__main__":
-    main()
+    log("Starting full benchmark run")
+    results = run_all()
+    print_results_table(results)
+    write_results_csv(results)
+    log("Benchmark completed. CSV written.")
+
