@@ -1,12 +1,8 @@
 
 # Embedding Micro Bench
 
-Tiny embedding enchmarker. 
-
-## Why
-Measure model latency, token load, throughput.  
-Compare short/medium/long corpora.  
-Spot slowdowns, bottlenecks, drift.
+Tiny embedding enchmarker. Use it to measure model latency, token load, throughput.  
+Compare short/medium/long corpora.  Spot slowdowns, bottlenecks, drift.
 Designed for local endpoints but can be easily modded for cloud API services.
 
 ## What it does
