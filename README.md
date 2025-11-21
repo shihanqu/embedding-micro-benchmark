@@ -62,14 +62,7 @@ benchmark.py
 
 ## Notes
 
-* Designed for local LLM/embedding endpoints
+* Designed for local LLM/embedding endpoints but can be modded for cloud api.
 * Verbose logs show heartbeat at all stages
 * Keep runs/corpora tight for quick testing
 * Expand corpora or models freely; code scales cleanly
-
-## License
-
-MIT
-
-```
-
